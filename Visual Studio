@@ -1,0 +1,192 @@
+using Microsoft.Spark.Sql;
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using static Microsoft.Spark.Sql.Functions;
+using Microsoft.Spark.Sql.Streaming;
+
+
+namespace MySparkApp
+
+{
+
+    class Program
+
+    {
+
+        static readonly DateTime s_referenceDate = new DateTime(2015, 10, 20);
+
+        static void Main(string[] args)
+
+        {
+
+            //SampleWordCount();
+            GithubProjects();
+            //Streaming();
+
+        }
+
+        private static void Streaming()
+        {
+            var hostname = "127.0.0.1" ;
+            var port = 9999;
+
+            SparkSession spark = SparkSession
+                .Builder()
+                .AppName("Streaming example with a UDF")
+                .GetOrCreate();
+
+            DataFrame lines = spark
+            .ReadStream()
+            .Format("socket")
+            .Option("host", hostname)
+            .Option("port", port)
+            .Load();
+
+            Func<Column, Column> udfArray =
+                Udf<string, string[]>((str) => new string[] { str, $"{str} {str.Length}" });
+
+            DataFrame arrayDF = lines.Select(Explode(udfArray(lines["value"])));
+
+            StreamingQuery query = arrayDF
+             .WriteStream()
+             .Format("console")
+             .Start();
+        }
+
+        private static void GithubProjects()
+
+
+        {
+
+            // Create Spark session
+
+            SparkSession spark =
+
+              SparkSession.Builder().AppName("GitHub and Spark Batch").GetOrCreate();
+
+
+            // Stop Spark session
+
+            DataFrame projectsDf = spark
+                .Read()
+                .Schema("id INT, url STRING, owner_id INT, " +
+                "name STRING, descriptor STRING, language STRING, " +
+                "created_at STRING, forked_from INT, deleted STRING," +
+                "updated_at STRING")
+                .Csv(@"/Users/yassineik/Library/Mobile Documents/com~apple~CloudDocs/Études/Cours/ESG Finance/M2/Semestre 1/10- C#/projects_smaller.csv");
+
+            projectsDf.Show();
+
+            // Drop any rows with NA values
+            DataFrameNaFunctions dropEmptyProjects = projectsDf.Na();
+            DataFrame cleanedProjects = dropEmptyProjects.Drop("any");
+
+            // Remove unnecessary columns
+            cleanedProjects = cleanedProjects.Drop("id", "url", "owner_id");
+            cleanedProjects.Show();
+
+            // Average number of times each language has been forked
+            DataFrame groupedDF = cleanedProjects
+                .GroupBy("language")
+                .Agg(Avg(cleanedProjects["forked_from"]));
+
+            // Enumerable.GroupBy<> Linq en c#
+
+            // Sort by most forked languages first
+            groupedDF.OrderBy(Desc("avg(forked_from)")).Show();
+
+            // Utilisation des types génériques (generics)
+            //IEnumerable<int> mesentiers = Enumerable.Range(0, 10);
+            //var mesentiers2 = new List<int>(mesentiers);
+            // Accès par indice : list, par clé : dictionnary
+            //var monDictionnaire = new Dictionary<string, string>();
+            //monDictionnaire["integer"] = "nombre entier";
+
+            spark.Udf().Register<string, bool>(
+                "MyUDF",
+                (date) => DateTime.TryParse(date, out DateTime convertedDate) && (convertedDate > s_referenceDate));
+            cleanedProjects.CreateOrReplaceTempView("dateView");
+
+            DataFrame dateDf = spark.Sql(
+                "SELECT *, MyUDF(dateView.updated_at) AS datebefore FROM dateView");
+            Debugger.Launch();
+            dateDf.Show(); // Cette fonction ne veut pas marcher, affaire à suivre
+
+            spark.Stop();
+
+        }
+
+
+
+        private static void SampleWordCount()
+
+
+        {
+
+            //Console.ReadKey();
+
+            //Debugger.Launch();
+
+            // Create Spark session
+
+            SparkSession spark =
+
+              SparkSession
+
+                .Builder()
+
+                .AppName("word_count_sample")
+
+                .GetOrCreate();
+
+
+            // Create initial DataFrame
+
+            string filePath = "input.txt";
+
+            //string filePath = args[0];
+
+            Console.WriteLine($"chemin du fichier : {filePath}");
+
+            DataFrame dataFrame = spark.Read().Text(filePath);
+
+
+            //Count words
+
+            DataFrame words =
+
+              dataFrame
+
+                .Select(Split(Col("value"), " ").Alias("words"))
+
+                .Select(Explode(Col("words")).Alias("word"))
+
+                .GroupBy("word")
+
+                .Count()
+
+                .OrderBy(Col("count").Desc());
+
+
+            // Display results
+
+            words.Show();
+
+
+            // Stop Spark session
+
+            spark.Stop();
+
+        }
+
+
+
+
+
+
+    }
+
+}
